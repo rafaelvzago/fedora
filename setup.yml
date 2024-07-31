@@ -1,0 +1,246 @@
+---
+- name: Configure new machine
+  hosts: localhost
+  become_user: root
+
+  vars:
+    ssh_keys_source: /data/zago/Keys
+    ssh_keys_dest: /home/{{ ansible_user_id }}/.ssh
+    config_file_source: /data/zago/Keys/config
+    config_file_dest: /home/{{ ansible_user_id }}/.ssh/config
+    kubectl_version: "v1.28.1"  
+    oc_version: "latest"  # Add the desired oc version if needed
+
+  tasks:
+    - name: Adding Docker repository
+      block:
+        - name: Add Docker repository
+          become: yes
+          dnf:
+            name: https://download.docker.com/linux/fedora/docker-ce.repo
+            state: present
+
+        - name: Install Docker
+          become: yes
+          dnf:
+            name: docker-ce
+            state: present
+            
+    - name: Install required packages
+      become: yes
+      package:
+        name:
+          - python-devel
+          - vim
+          - tmux
+          - alacritty
+          - git
+          - git-crypt
+          - fzf
+          - fd-find
+          - ripgrep
+          - zsh
+          - python3-virtualenv
+          - python3-pip
+          - podman
+          - podman-compose
+          - chromium
+          - '@development-tools'
+          - libX11-devel
+          - libXinerama-devel
+          - libXft-devel
+          - imlib2-devel
+          - gcc 
+          - gcc-c++ 
+          - make 
+          - git 
+          - python3.11 
+          - python3.11-devel
+          - fedora-packager
+          - rpmdevtools
+          - rpmlint
+          - neovim
+          - java-11-openjdk-devel.x86_64
+          - gpg
+          - gcc-c++
+          - patch
+          - readline
+          - readline-devel
+          - zlib
+          - zlib-devel
+          - libyaml-devel
+          - libffi-devel
+          - openssl-devel
+          - make
+          - bzip2
+          - autoconf
+          - automake
+          - libtool
+          - bison
+          - sqlite-devel
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+          - dnf-plugins-core
+
+        state: present
+        update_cache: yes
+
+    - name: Install yadm
+      become: yes
+      shell: |
+        curl -fLo /usr/local/bin/yadm https://github.com/TheLocehiliosan/yadm/raw/master/yadm
+        chmod a+x /usr/local/bin/yadm
+        
+    - name: Add current user to sudoers without password
+      become: yes
+      lineinfile:
+        path: /etc/sudoers
+        state: present
+        regexp: '^%{{ ansible_user_id }} ALL=\(ALL\) NOPASSWD: ALL'
+        line: '%{{ ansible_user_id }} ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+
+    - name: Configure vim with Vundle
+      git:
+        repo: https://github.com/VundleVim/Vundle.vim.git
+        dest: ~/.vim/bundle/Vundle.vim
+
+    - name: Install TPM (Tmux Plugin Manager)
+      git:
+        repo: https://github.com/tmux-plugins/tpm
+        dest: ~/.tmux/plugins/tpm
+
+    - name: Creating .ssh directory
+      file:
+        path: "{{ ssh_keys_dest }}"
+        state: directory
+        owner: "{{ ansible_user_id }}"
+        mode: 0700
+
+    - name: Copy SSH keys
+      copy:
+        src: "{{ ssh_keys_source }}/"
+        dest: "{{ ssh_keys_dest }}/"
+        owner: "{{ ansible_user_id }}"
+        mode: 0600
+        remote_src: yes
+
+    - name: Debug - List files in SSH directory
+      debug:
+        msg: "{{ lookup('fileglob', ssh_keys_dest + '/*', wantlist=True) }}"
+
+    - name: Set public key permissions to each key
+      command: chmod 700 "{{ ssh_keys_dest }}"
+
+    - name: Set permissions on copied SSH keys
+      command: chmod 600 "{{ item }}"
+      with_fileglob:
+        - "{{ ssh_keys_dest }}/*"
+
+    - name: Set private key permissions to all .pub and .pem files under .ssh
+      command: chmod 644 "{{ item }}"
+      with_fileglob:
+        - "{{ ssh_keys_dest }}/*.pub"
+
+    - name: Copy .config file
+      copy:
+        src: "{{ config_file_source }}"
+        dest: "{{ config_file_dest }}"
+        owner: "{{ ansible_user_id }}"
+        mode: 0644
+        remote_src: yes
+
+    - name: Copy .gpg file
+      copy:
+        src: /{{ ssh_keys_source }}/.gnupg
+        dest: /home/{{ ansible_user_id }}/.gnupg
+        owner: "{{ ansible_user_id }}"
+        mode: 0600
+
+    - name: Copy .aws folder
+      copy:
+        src: /{{ ssh_keys_source }}/.aws
+        dest: /home/{{ ansible_user_id }}/.aws
+        owner: "{{ ansible_user_id }}"
+        mode: 0600
+
+    - name: Copy .did folder
+      copy:
+        src: /{{ ssh_keys_source }}/.did
+        dest: /home/{{ ansible_user_id }}/.did
+        owner: "{{ ansible_user_id }}"
+        mode: 0600
+
+    - name: Install JetBrains Nerd Font
+      shell: |
+        mkdir -p ~/.local/share/fonts
+        cd ~/.local/share/fonts
+        wget https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/JetBrainsMono.zip
+        unzip JetBrainsMono.zip
+        fc-cache -fv
+
+    - name: Ensure fzf is installed
+      shell: |
+        git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
+        ~/.fzf/install --all
+
+    - name: Clone dot-files repository with yadm
+      shell: |
+        yadm clone git@github.com:rafaelvzago/dot-zago.git -f
+
+    - name: Clone Powerlevel10k repository
+      git:
+        repo: https://github.com/romkatv/powerlevel10k.git
+        dest: ~/powerlevel10k
+        depth: 1
+
+    - name: Install Vundle plugins
+      command: vim +PluginInstall +qall
+
+    - name: Clone Alacritty themes repository
+      git:
+        repo: https://github.com/alacritty/alacritty-theme
+        dest: ~/.config/alacritty/themes
+        depth: 1
+
+    - name: Install pip3 packages
+      pip:
+        name:
+          - yq
+
+    - name: Download and install kubectl
+      block:
+        - name: Set kubectl download URL
+          set_fact:
+            kubectl_download_url: "https://storage.googleapis.com/kubernetes-release/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+
+        - name: Download kubectl
+          become: yes
+          get_url:
+            url: "{{ kubectl_download_url }}"
+            dest: "/usr/local/bin/kubectl"
+            mode: '0755'
+
+    - name: Download and install oc
+      block:
+        - name: Set oc download URL
+          set_fact:
+            oc_download_url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ oc_version }}/openshift-client-linux.tar.gz"
+
+        - name: Download oc
+          get_url:
+            url: "{{ oc_download_url }}"
+            dest: "/tmp/openshift-client-linux.tar.gz"
+
+        - name: Extract oc
+          become: yes
+          unarchive:
+            src: "/tmp/openshift-client-linux.tar.gz"
+            dest: "/usr/local/bin"
+            remote_src: yes
+            creates: "/usr/local/bin/oc"
+
+
